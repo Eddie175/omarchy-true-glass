@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.eddie175.glass",
+  "name": "Glass",
+  "version": "1.0.0",
+  "author": "Eddie175",
+  "license": "MIT",
+  "description": "Real glass for your Omarchy desktop: the bar, menus, notifications and windows bend what is behind them at the edges and catch the light. Works with any theme.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Glass",
+    "description": "Turn Glass on and set how the glass looks",
+    "category": "Appearance",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

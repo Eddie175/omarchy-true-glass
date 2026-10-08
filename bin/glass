@@ -1,0 +1,470 @@
+#!/bin/bash
+# glass: turns Glass on and off, run by the Glass plugin's service. What it changes
+# outside the plugin's folder is recorded in ~/.local/state/omarchy-glass and undone
+# by `stop`.
+#
+#   glass start      build the engine if needed, load it, apply everything
+#   glass apply      the engine's configuration again (after a Hyprland reload)
+#   glass settings   the menu's settings only, live
+#   glass terminals  Clear terminals on or off, as the menu says
+#   glass lock       the glass lock screen on or off, as the menu says
+#   glass stop       unload the engine and undo everything Glass changed
+#   glass gone       the service went away: if the plugin was disabled or removed
+#                    (not a shell restart), the same as stop
+#
+# The state for the menu is written to ~/.local/state/omarchy-glass/status:
+#   off | building | on | unsupported HYPRLAND | tools WHAT | failed LOG | restart | relogin
+#   | crashed REPORT | gpu software | gpu old | gpu shaders RENDERER
+set -uo pipefail
+
+DIR=${GLASS_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+# (settings and state outside the plugin's folder: the shell reloads every plugin
+# when a file inside one changes, so a setting written there reloaded them all)
+STATE=${GLASS_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-glass}
+ENGINE="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-glass"
+ID="io.github.eddie175.glass"
+SETTINGS="$STATE/settings.json"
+THEME="$HOME/.local/state/omarchy/current/theme"
+mkdir -p "$STATE"
+
+status() {
+  # (why Glass turned itself off, a crash or this GPU, stays for the menu until Glass
+  # next starts: the "off" that follows the switch flipping off doesn't replace it)
+  [[ $* == off ]] && grep -qE '^(crashed|gpu)' "$STATE/status" 2>/dev/null && return 0
+  printf '%s\n' "$*" > "$STATE/status.new" && mv -f "$STATE/status.new" "$STATE/status"
+}
+
+# A copy of this script and its state, ready for when the plugin goes away: the
+# service runs it then, and the plugin's folder may already be deleted.
+MIRROR="${XDG_RUNTIME_DIR:-/tmp}/omarchy-glass-gone"
+mirror() {
+  [[ -n ${GLASS_STATE:-} ]] && return 0      # (this is the copy)
+  mkdir -p "$MIRROR"
+  cp -f "$0" "$MIRROR/glass.$$" && mv -f "$MIRROR/glass.$$" "$MIRROR/glass"
+  cp -r "$STATE" "$MIRROR/state.$$" && rm -rf "$MIRROR/state" && mv "$MIRROR/state.$$" "$MIRROR/state" 2>/dev/null
+  rm -rf "$MIRROR/state.$$"
+  printf '%s\n' "$DIR" > "$MIRROR/dir"
+}
+
+# a setting from the menu (jq default when missing)
+setting() { jq -r "if has(\"$1\") then .$1 else $2 end" "$SETTINGS" 2>/dev/null || echo "$2"; }
+# ...as it applies: Low power (older computers) makes the glass clear and thin and
+# turns the window light off, while the menu keeps the settings for later
+applied() {
+  if [[ $(setting low_power false) == true ]]; then
+    case $1 in windows | menus | depth) echo 0; return ;; light) echo false; return ;; esac
+  fi
+  setting "$@"
+}
+
+# a colour from the theme in use, as 0xRRGGBB (Lua): KEY in FILE's SECTION
+color() {
+  local file=$1 section=$2 key=$3 fallback=$4 hex
+  hex=$(awk -v s="$section" -v k="$key" '
+    /^\[/ { cur = $0; gsub(/[][ ]/, "", cur); next }
+    cur == s && $1 == k { v = $3; gsub(/"/, "", v); print v; exit }' "$file" 2>/dev/null)
+  [[ $hex =~ ^#[0-9a-fA-F]{6} ]] || hex=$fallback
+  echo "0x${hex:1:6}"
+}
+
+# a light theme (dark text on light menus): as the theme says (mode = "light"), or,
+# for a theme that doesn't say, by how light its background is. A card's text is the
+# dark drawing there, Light glass is the tint it offers, and the lock screen takes
+# the theme's ink.
+light_theme() {
+  local mode bg
+  mode=$(awk -F'"' '/^mode *=/ { print $2; exit }' "$THEME/colors.toml" 2>/dev/null)
+  bg=$(color "$THEME/colors.toml" "" background "#16171c")
+  if [[ $mode == light ]] ||
+     [[ -z $mode && $(( 2126 * 16#${bg:2:2} + 7152 * 16#${bg:4:2} + 722 * 16#${bg:6:2} )) -gt 1275000 ]]; then
+    echo true
+  else
+    echo false
+  fi
+}
+
+# the glass's tint: Dark glass on a dark theme, Light glass on a light one, or none.
+# (Each only where it fits the theme's text: smoked, a light theme's dark text sat on
+# dark glass, and milky, a dark theme's white text would. The menu shows the one.)
+tone() {
+  if [[ $(light_theme) == true ]]; then
+    [[ $(setting light_glass false) == true ]] && echo light || echo none
+  else
+    [[ $(setting dark false) == true ]] && echo dark || echo none
+  fi
+}
+
+# the engine's configuration (glass.lua) with the settings and the theme's colours
+apply() {
+  local bg accent tooltip
+  bg=$(color "$THEME/colors.toml" "" background "#16171c")
+  accent=$(color "$THEME/colors.toml" "" accent "#409cff")
+  tooltip=$(color "$THEME/shell.toml" tooltip background "#${bg:2}")
+  # the theme's corner radius (a reload has just put it back; Round corners sets its own)
+  local rounding
+  rounding=$(hyprctl getoption -j decoration:rounding 2>/dev/null | jq -r '.int // 0' 2>/dev/null)
+  [[ $rounding =~ ^[0-9]+$ ]] || rounding=0
+  local light_ui
+  light_ui=$(light_theme)
+  # (for the menu: it shows the tint that fits this theme)
+  printf '%s\n' "$( [[ $light_ui == true ]] && echo light || echo dark )" > "$STATE/theme-mode"
+  local lua="GLASS = { card = $bg, accent = $accent, tooltip = $tooltip,
+    windows = $(applied windows 0.5), menus = $(applied menus 0.5), depth = $(applied depth 0),
+    tone = '$(tone)', light = $(applied light true), low_power = $(setting low_power false), light_style = $(setting light_style 1),
+    round = $(setting round false), rounding = $rounding, light_ui = $light_ui,
+    clear_terminals = $(setting clear_terminals false) }; dofile('$DIR/glass.lua')"
+  hyprctl eval "$lua" >/dev/null 2>&1
+  [[ $(setting clear_terminals false) == true ]] && foot_after_theme
+  return 0
+}
+
+# the menu's live settings only (frost, depth, the tint, the border light)
+settings_only() {
+  local t
+  t=$(tone)
+  hyprctl eval "hl.plugin.hyprglass.config({ frost = { windows = $(applied windows 0.5), cards = $(applied menus 0.5) },
+    depth = $(applied depth 0), low_power = $( [[ $(setting low_power false) == true ]] && echo 1 || echo 0 ), dark_glass = $( [[ $t == dark ]] && echo 1 || echo 0 ), light_glass = $( [[ $t == light ]] && echo 1 || echo 0 ),
+    gleam = $( [[ $(applied light true) == true ]] && echo 1 || echo 0 ), gleam_style = $(setting light_style 1) })" >/dev/null 2>&1
+}
+
+loaded_version() { hyprctl plugin list -j 2>/dev/null | jq -r '.[] | select(.name == "hyprglass") | .version' 2>/dev/null | head -1; }
+
+# unload whichever Glass engine is loaded. Hyprland unloads by the exact path it
+# loaded, so the path is remembered at load ($STATE/loaded); the builds in the
+# engine folder are tried after it.
+unload() {
+  local so
+  [[ -z $(loaded_version) ]] && return 0
+  for so in "$(cat "$STATE/loaded" 2>/dev/null)" "$ENGINE"/glass-*.so; do
+    [[ -n $so && $so != *'*'* ]] && hyprctl plugin unload "$so" >/dev/null 2>&1
+    [[ -z $(loaded_version) ]] && { rm -f "$STATE/loaded"; return 0; }
+  done
+  [[ -z $(loaded_version) ]]
+}
+
+# ── the bar: transparent while Glass is on (Omarchy's own setting) ──────────────
+bar_on() {
+  [[ $(omarchy-shell shell listShellConfig 2>/dev/null | jq -r '.bar.transparent // false') == true ]] && return
+  omarchy-shell shell toggleBarTransparency >/dev/null 2>&1 && touch "$STATE/bar-made-transparent"
+}
+bar_off() {
+  [[ -f $STATE/bar-made-transparent ]] || return 0
+  [[ $(omarchy-shell shell listShellConfig 2>/dev/null | jq -r '.bar.transparent // false') == true ]] &&
+    omarchy-shell shell toggleBarTransparency >/dev/null 2>&1
+  rm -f "$STATE/bar-made-transparent"
+}
+
+# ── the shell's outlines and dim layers: off while Glass is on ──────────────────
+# Themes draw a coloured outline round menus, tooltips and notifications (on glass
+# it reads as a frame round every pane) and a full-screen dim behind the launcher,
+# the menu and password prompts (the glass would take it for the card). A marked
+# block in Omarchy's machine-level override (~/.config/omarchy/shell.toml, layered
+# over every theme and re-read live) turns them off; turning Glass off removes it.
+USER_SHELL="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.toml"
+OUTLINES_BEGIN="# >>> Glass: no outlines round glass panes (removed when Glass is off)"
+OUTLINES_END="# <<< Glass"
+outlines_on() {
+  # (rewritten each time: a newer Glass may change what the block holds)
+  outlines_off
+  mkdir -p "$(dirname "$USER_SHELL")"
+  # (a file without a final newline gets one first, and loses it again on removal)
+  if [[ -s $USER_SHELL && -n $(tail -c1 "$USER_SHELL") ]]; then echo >> "$USER_SHELL"; touch "$STATE/outlines-newline"; fi
+  {
+    echo "$OUTLINES_BEGIN"
+    local section
+    for section in popups tooltip notifications launcher menu polkit; do
+      printf '[%s]\nborder-alpha = 0.0\n' "$section"
+      # (and the full-screen dim behind the launcher, the menu and password
+      # prompts: the glass took it for part of the card, and the whole screen
+      # became one frosted pane)
+      [[ $section == launcher || $section == menu || $section == polkit ]] && echo "scrim-alpha = 0.0"
+    done
+    echo "$OUTLINES_END"
+  } >> "$USER_SHELL"
+}
+outlines_off() {
+  [[ -f $USER_SHELL ]] && grep -qF "$OUTLINES_BEGIN" "$USER_SHELL" || return 0
+  sed -i "\|^$OUTLINES_BEGIN\$|,\|^$OUTLINES_END\$|d" "$USER_SHELL"
+  if [[ -f $STATE/outlines-newline ]]; then truncate -s -1 "$USER_SHELL"; rm -f "$STATE/outlines-newline"; fi
+  # (a file Glass created and left empty goes too)
+  [[ -s $USER_SHELL ]] || rm -f "$USER_SHELL"
+}
+
+# ── Clear terminals: one marked line in each terminal's own config ──────────────
+MARK="# Glass: clear terminal (Glass menu > Clear terminals)"
+terminals_on() {
+  local f
+  f="$HOME/.config/ghostty/config"
+  [[ -f $f ]] && ! grep -qF "$MARK" "$f" && printf '%s\nconfig-file = ?"%s"\n' "$MARK" "$DIR/terminals/ghostty.conf" >> "$f"
+  f="$HOME/.config/kitty/kitty.conf"
+  [[ -f $f ]] && ! grep -qF "$MARK" "$f" && printf '%s\ninclude %s\n' "$MARK" "$DIR/terminals/kitty.conf" >> "$f"
+  # (foot: an include belongs in the main section, so it goes after the theme's)
+  f="$HOME/.config/foot/foot.ini"
+  if [[ -f $f ]] && ! grep -qF "$MARK" "$f" && grep -q '^include=' "$f"; then
+    sed -i "0,/^include=.*/s||&\n$MARK\ninclude=$DIR/terminals/foot.ini|" "$f"
+  fi
+  # (alacritty: added to its one import list)
+  f="$HOME/.config/alacritty/alacritty.toml"
+  if [[ -f $f ]] && ! grep -qF "$DIR/terminals/alacritty.toml" "$f" && grep -q '^general.import = \[.*\]' "$f"; then
+    sed -i "s|^\(general.import = \[.*\)\]|\1, \"$DIR/terminals/alacritty.toml\" ] $MARK|" "$f"
+  fi
+  omarchy-restart-terminal >/dev/null 2>&1
+  foot_live 0
+}
+terminals_off() {
+  local f
+  # (Foot windows Glass made clear get their own background back)
+  grep -qsF "$MARK" "$HOME/.config/foot/foot.ini" && foot_live "$(foot_own_alpha)"
+  for f in "$HOME/.config/ghostty/config" "$HOME/.config/kitty/kitty.conf" "$HOME/.config/foot/foot.ini"; do
+    [[ -f $f ]] && grep -qF "$MARK" "$f" && sed -i "\|^$MARK\$|,+1d" "$f"
+  done
+  f="$HOME/.config/alacritty/alacritty.toml"
+  [[ -f $f ]] && grep -qF "$DIR/terminals/alacritty.toml" "$f" &&
+    sed -i "s|, \"$DIR/terminals/alacritty.toml\" \] $MARK|]|" "$f"
+  omarchy-restart-terminal >/dev/null 2>&1
+}
+
+# Foot (Omarchy's own terminal) reads its config only when it starts: the windows
+# already open take the clear background, or their own again, through the terminal
+# itself, as Omarchy's theme switch gives them its colours (omarchy-theme-set-foot).
+# ALPHA: 0 (clear) to 100 (opaque)
+foot_live() {
+  pgrep -x foot >/dev/null || return 0
+  local bg pid child tty
+  bg=$(color "$THEME/colors.toml" "" background "#000000")
+  for pid in $(pgrep -x foot); do
+    for child in $(pgrep -P "$pid"); do
+      tty=$(readlink "/proc/$child/fd/1" 2>/dev/null)
+      [[ $tty == /dev/pts/* && -w $tty ]] && printf '\033]11;[%s]#%s\007' "$1" "${bg:2}" > "$tty" 2>/dev/null
+    done
+  done
+  return 0
+}
+# the background's own alpha in the user's Foot config (as 0..100)
+foot_own_alpha() {
+  local a
+  a=$(grep -hs '^alpha *=' "$HOME/.config/foot/foot.ini" "$THEME/foot.ini" | tail -1 | cut -d= -f2)
+  awk -v a="${a:-1}" 'BEGIN { a += 0; if (a < 0 || a > 1) a = 1; printf "%d", a * 100 + 0.5 }'
+}
+# A theme switch gives every open Foot window the new theme's background, opaque:
+# clear again once Omarchy's own step is done (it runs beside the Hyprland reload
+# that brings this here)
+foot_after_theme() {
+  pgrep -x foot >/dev/null || return 0
+  (
+    sleep 0.5
+    for _ in $(seq 25); do pgrep -f omarchy-theme-set-foot >/dev/null || break; sleep 0.2; done
+    foot_live 0
+  ) >/dev/null 2>&1 &
+  disown
+}
+
+# ── the glass lock screen (with the Lock Designs plugin) ────────────────────────
+LOCKS="$HOME/.config/omarchy/lock-designs"
+lock_on() {
+  ls "$HOME/.config/omarchy/plugins" 2>/dev/null | grep -q 'lock-designs$' || return 0
+  mkdir -p "$LOCKS/glass"
+  # (the shader under a name from its contents: the shell caches shaders by file
+  # name, so an updated one under the old name was never seen until a restart)
+  local shader
+  shader="glass-$(sha1sum "$DIR/lock/glass.frag.qsb" | cut -c1-10).frag.qsb"
+  rm -f "$LOCKS"/glass/glass*.frag.qsb
+  cp "$DIR/lock/glass.frag.qsb" "$LOCKS/glass/$shader"
+  sed "s|/glass.frag.qsb\"|/$shader\"|" "$DIR/lock/Glass.qml" > "$LOCKS/Glass.qml"
+  cp "$DIR/lock/digits.png" "$DIR/lock/digits.json" "$LOCKS/glass/"
+  touch "$STATE/lock-installed"
+  lock_settings
+  local current
+  current=$(omarchy-shell lock design 2>/dev/null | tr -d '"[:space:]')
+  [[ -n $current && $current != my-glass ]] && printf '%s\n' "$current" > "$STATE/lock-before"
+  omarchy-shell lock rescanDesigns >/dev/null 2>&1
+  for _ in $(seq 15); do
+    [[ $(omarchy-shell lock setDesign my-glass 2>/dev/null) == *ok* ]] && break
+    sleep 0.2
+  done
+}
+# the lock design reads Dark glass from a file beside it (it can't see the plugin): smoked
+# glass with Dark, and a light theme's own look (its ink, the wallpaper as it is).
+lock_settings() {
+  [[ -f $STATE/lock-installed && -d $LOCKS/glass ]] || return 0
+  local light
+  light=$(light_theme)
+  printf '{ "dark": %s, "light": %s }\n' "$( [[ $(tone) == dark && $light == false ]] && echo true || echo false )" "$light" > "$LOCKS/glass/settings.json"
+}
+lock_off() {
+  [[ -f $STATE/lock-installed ]] || return 0
+  if [[ $(omarchy-shell lock design 2>/dev/null | tr -d '"[:space:]') == my-glass ]]; then
+    omarchy-shell lock setDesign "$(cat "$STATE/lock-before" 2>/dev/null || echo my-classic)" >/dev/null 2>&1
+  fi
+  rm -f "$LOCKS/Glass.qml" "$LOCKS"/glass/glass*.frag.qsb "$LOCKS/glass/digits.png" "$LOCKS/glass/digits.json" "$LOCKS/glass/settings.json"
+  rmdir "$LOCKS/glass" 2>/dev/null
+  omarchy-shell lock rescanDesigns >/dev/null 2>&1
+  rm -f "$STATE/lock-installed" "$STATE/lock-before"
+}
+
+# ── safety ───────────────────────────────────────────────────────────────────────
+# The graphics, from the kernel's view, before anything is loaded:
+#   full   a current GPU (NVIDIA's driver, amdgpu, Intel Xe and Intel Gen12 and later)
+#   light  Intel Gen9 to Gen11 (2015-2020): Low power by default
+#   old    Intel Gen8 and earlier (Broadwell, Haswell and before), nouveau, radeon,
+#          virtual machines: off unless the menu's Try anyway (a 2013 Haswell's GPU
+#          hung under the glass, and Hyprland aborts on any GPU reset)
+#   none   no GPU driver (software rendering): Glass stays off
+# (GLASS_TEST_GPU="DRIVER ID" pretends, for testing)
+gpu_tier() {
+  local card driver id tier=none rows
+  if [[ -n ${GLASS_TEST_GPU:-} ]]; then
+    rows=$GLASS_TEST_GPU
+  else
+    rows=$(for card in /sys/class/drm/card[0-9]; do
+      [[ -e $card/device/driver ]] || continue
+      echo "$(basename "$(readlink -f "$card/device/driver")") $(cat "$card/device/device" 2>/dev/null)"
+    done)
+  fi
+  while read -r driver id; do
+    [[ -n $driver ]] || continue
+    case $driver in
+      nvidia | amdgpu | xe) echo full; return ;;
+      i915)
+        case ${id,,} in
+          0x9a* | 0x4c* | 0x46* | 0xa7* | 0x49* | 0x56* | 0x7d* | 0x64* | 0xe2*) echo full; return ;;
+          0x00* | 0x01* | 0x04* | 0x0a* | 0x0c* | 0x0d* | 0x0f* | 0x16* | 0x22* | 0x25* | 0x27* | 0x29* | 0x2a* | 0x2e* | 0xa0* | 0xa1*)
+            [[ $tier == none ]] && tier=old ;;
+          *) [[ $tier != light ]] && tier=light ;;
+        esac ;;
+      *) [[ $tier == none ]] && tier=old ;;
+    esac
+  done <<< "$rows"
+  echo "$tier"
+}
+
+# Hyprland crashed while Glass was loaded (its crash report lists the plugin, and is
+# newer than the load): Glass stays off until it's turned on again, so a crash can
+# never repeat at every login. Prints the report's path.
+crashed_with_glass() {
+  local marker report
+  for marker in "$STATE/loaded" "$STATE/loading"; do
+    [[ -f $marker ]] || continue
+    report=$(ls -t "${XDG_CACHE_HOME:-$HOME/.cache}"/hyprland/hyprlandCrashReport*.txt 2>/dev/null | head -1)
+    [[ -n $report && $report -nt $marker ]] && grep -q hyprglass "$report" && { echo "$report"; return 0; }
+  done
+  return 1
+}
+
+# the setting written as the menu would (atomically)
+set_setting() {
+  local tmp="$SETTINGS.$$"
+  jq --argjson v "$2" ".$1 = \$v" "$SETTINGS" > "$tmp" 2>/dev/null && mv -f "$tmp" "$SETTINGS" || rm -f "$tmp"
+}
+
+start() {
+  [[ $(setting on false) == true ]] || { status off; return 0; }
+  local report tier
+  # (this login's Hyprland is not the one that was running when Glass was loaded)
+  if [[ $(cat "$STATE/session" 2>/dev/null) != "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && report=$(crashed_with_glass); then
+    rm -f "$STATE/loaded" "$STATE/loading"
+    set_setting on false
+    status "crashed $report"
+    return 1
+  fi
+  tier=$(gpu_tier)
+  if [[ $tier == none ]]; then status "gpu software"; return 1; fi
+  if [[ $tier == old && $(setting try_old_gpu false) != true ]]; then
+    set_setting on false
+    status "gpu old"
+    return 1
+  fi
+  # (older graphics: Low power from the start, unless it was already set either way)
+  [[ ($tier == light || $tier == old) && $(jq -r 'has("low_power")' "$SETTINGS" 2>/dev/null) != true ]] && set_setting low_power true
+  # (Hyprland updated but not restarted: the running one is the old version, and
+  # an engine built for the new one must not be loaded into it. The engine already
+  # loaded keeps working; after the next login Glass builds for the new version.)
+  local running installed
+  running=$(hyprctl version -j 2>/dev/null | jq -r '.version // empty')
+  installed=$(pacman -Q hyprland 2>/dev/null | awk '{print $2}' | sed 's/-[0-9]*$//')
+  if [[ -n $running && -n $installed && $installed != "$running"* ]]; then
+    if [[ -n $(loaded_version) ]]; then apply; status on; else status relogin; fi
+    return 0
+  fi
+  local result path version
+  [[ -f "$ENGINE/current" && "$(cat "$ENGINE/stamp" 2>/dev/null)" ]] || status building
+  # (a build takes about 40 s: the menu says so while it runs)
+  result=$("$DIR/bin/glass-engine" ensure | tail -1)
+  case $result in
+    ok\ *) read -r _ path version <<<"$result" ;;
+    unsupported\ *|tools\ *|failed\ *) status "$result"; return 1 ;;
+    *) status "failed $ENGINE/build.log"; return 1 ;;
+  esac
+  if [[ $(loaded_version) != "$version" ]]; then
+    unload || { status restart; return 1; }
+    printf '%s\n' "${HYPRLAND_INSTANCE_SIGNATURE:-}" > "$STATE/session"
+    touch "$STATE/loading"
+    hyprctl plugin load "$path" >/dev/null 2>&1
+    rm -f "$STATE/loading"
+    [[ $(loaded_version) == "$version" ]] || { status "failed load"; return 1; }
+    printf '%s\n' "$path" > "$STATE/loaded"
+  fi
+  apply
+  # the engine compiles its shaders on the first frame it draws: if they don't build
+  # on this GPU, or it renders in software, Glass takes itself out again
+  local s renderer
+  for _ in $(seq 20); do
+    s=$(hyprctl -j hyprglass status 2>/dev/null | jq -r '.shaders // empty' 2>/dev/null)
+    [[ $s == ready || $s == failed ]] && break
+    sleep 0.25
+  done
+  renderer=$(hyprctl -j hyprglass status 2>/dev/null | jq -r '.renderer // empty' 2>/dev/null)
+  if [[ $s == failed || ${renderer,,} =~ llvmpipe|softpipe|swiftshader ]]; then
+    unload
+    hyprctl reload >/dev/null 2>&1
+    [[ $s == failed ]] && status "gpu shaders ${renderer:-unknown}" || status "gpu software"
+    return 1
+  fi
+  bar_on
+  outlines_on
+  [[ $(setting clear_terminals false) == true ]] && terminals_on || terminals_off
+  [[ $(setting lock false) == true ]] && lock_on || lock_off
+  status on
+}
+
+stop() {
+  unload
+  bar_off
+  outlines_off
+  terminals_off
+  lock_off
+  # (drops the rules Glass added at runtime: Hyprland reads its own config again)
+  hyprctl reload >/dev/null 2>&1
+  status off
+}
+
+trap mirror EXIT
+
+case ${1:-} in
+  start) start ;;
+  apply) [[ -n $(loaded_version) && $(setting on false) == true ]] && apply ;;
+  settings) [[ -n $(loaded_version) ]] && settings_only; lock_settings ;;
+  terminals) [[ $(setting clear_terminals false) == true ]] && terminals_on || terminals_off ;;
+  lock) [[ $(setting lock false) == true ]] && lock_on || lock_off ;;
+  stop) stop ;;
+  gone)
+    # The service went away. Disabling the plugin (which Omarchy's plugin remove
+    # does first) takes it off the shell's config; a shell restart leaves it there.
+    # This runs from a copy (the plugin's folder may be deleted next), checked a
+    # moment later, once the shell has written its config.
+    sleep 2
+    if [[ -d $DIR ]] && jq -e --arg id "$ID" '[.. | objects | select(.id? == $id)] | length > 0' \
+         "$HOME/.config/omarchy/shell.json" >/dev/null 2>&1; then
+      exit 0
+    fi
+    stop
+    # removed, not just disabled: its settings and engine go too
+    if [[ ! -d $DIR ]]; then
+      # (STATE here is the copy's; the real one is in ~/.local/state)
+      rm -rf "${ENGINE:?}" "${STATE:?}"
+      rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-glass"
+      rm -rf "${MIRROR:?}"
+    fi
+    ;;
+  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

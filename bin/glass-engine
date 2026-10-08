@@ -1,0 +1,96 @@
+#!/bin/bash
+# glass-engine: builds the Glass engine (a Hyprland plugin) for the Hyprland you
+# run, into ~/.local/share/omarchy-glass (outside the plugin's folder: the shell
+# reloads every plugin when a file inside one changes). The Glass plugin deletes
+# it when it is removed.
+#
+#   glass-engine ensure   build only if this Hyprland or the engine source changed
+#                         since the last build; the last line says what happened:
+#                           ok PATH VERSION | unsupported HYPRLAND | tools WHAT | failed LOG
+#   glass-engine build    build now
+#
+# Each build gets its own file name and version (Hyprland never reloads a path it
+# already loaded, and the version tells the plugin which build is loaded). The
+# previous build is kept until the next one is loaded.
+set -uo pipefail
+
+DIR=$(cd "$(dirname "$0")/.." && pwd)
+OUT="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-glass"
+SUPPORTED="0.56"
+mkdir -p "$OUT"
+
+headers=$(pacman -Q hyprland 2>/dev/null | awk '{print $2}' | sed 's/-[0-9]*$//')
+[[ -z $headers ]] && headers=$(pkg-config --modversion hyprland 2>/dev/null)
+source_hash=$(cd "$DIR/engine" && find . -type f \( -name '*.cpp' -o -name '*.hpp' -o -name Makefile -o -name '*.xml' -o -name '*.S' \) -print0 | sort -z | xargs -0 sha1sum | sha1sum | cut -c1-10)
+stamp="$headers $source_hash"
+
+missing_tools() {
+  local m=()
+  command -v make >/dev/null || m+=(make)
+  command -v g++ >/dev/null || m+=(g++)
+  command -v pkg-config >/dev/null || m+=(pkg-config)
+  [[ -d /usr/include/hyprland ]] || m+=("hyprland headers")
+  echo "${m[*]}"
+}
+
+build() {
+  if [[ $headers != "$SUPPORTED".* ]]; then
+    echo "unsupported ${headers:-unknown}"
+    return 1
+  fi
+  local tools
+  tools=$(missing_tools)
+  if [[ -n $tools ]]; then
+    echo "tools $tools"
+    return 1
+  fi
+  # (one build at a time: two at once shared the build folder and broke both)
+  exec 9>"$OUT/build.lock"
+  flock 9
+  local work="$OUT/build" log="$OUT/build.log"
+  local version="glass-$(echo "$stamp" | sha1sum | cut -c1-10)"
+  rm -rf "$work"
+  cp -r "$DIR/engine" "$work"
+  # (half the CPU threads, at the lowest CPU and disk priority: the computer stays
+  # usable while it builds; with every thread at full priority an older laptop
+  # crawled for minutes)
+  local jobs=$(( $(nproc) / 2 ))
+  (( jobs < 1 )) && jobs=1
+  local low=(nice -n 19)
+  command -v ionice >/dev/null && low+=(ionice -c 3)
+  if ! "${low[@]}" make -C "$work" -j"$jobs" HYPRGLASS_VERSION="$version" >"$log" 2>&1; then
+    rm -rf "$work"
+    echo "failed $log"
+    return 1
+  fi
+  local name="$version.so" old
+  strip --strip-debug -o "$OUT/$name.new" "$work/hyprglass.so" && mv -f "$OUT/$name.new" "$OUT/$name"
+  rm -rf "$work"
+  old=$(cat "$OUT/current" 2>/dev/null)
+  echo "$name" > "$OUT/current"
+  echo "$stamp" > "$OUT/stamp"
+  # (the build just replaced may still be loaded: it goes with the next build)
+  for f in "$OUT"/glass-*.so; do
+    [[ $(basename "$f") == "$name" || $(basename "$f") == "$old" ]] || rm -f "$f"
+  done
+  rm -f "$log"
+  echo "ok $OUT/$name $version"
+}
+
+case ${1:-ensure} in
+  ensure)
+    current=$(cat "$OUT/current" 2>/dev/null)
+    if [[ -n $current && -f $OUT/$current && "$(cat "$OUT/stamp" 2>/dev/null)" == "$stamp" ]]; then
+      echo "ok $OUT/$current ${current%.so}"
+    else
+      build
+    fi
+    ;;
+  build)
+    build
+    ;;
+  *)
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+    ;;
+esac

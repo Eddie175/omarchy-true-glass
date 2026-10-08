@@ -1,0 +1,3 @@
+# Glass: clear terminal background (the glass behind gives it body)
+[window]
+opacity = 0.0

@@ -31,6 +31,7 @@ DesignBase {
   // dark background while the wallpaper decoded, and then everything popped in)
   readonly property bool ready: (wallpaper.status === Image.Ready || quick.status === Image.Ready) && lock.atlas !== null
   onReadyChanged: if (ready) form = 1
+  Component.onCompleted: if (ready) form = 1
   Timer { interval: 1500; running: true; onTriggered: lock.form = 1 } // (no wallpaper at all: the clock and field still come)
   // (the curve of a critically damped spring: a smooth start, most of the way in
   // the first third, a long soft settle; an ease-out cubic started at full speed: a pop)
@@ -63,6 +64,8 @@ DesignBase {
   property var atlas: null
   FileView {
     path: lock.home + "/.config/omarchy/lock-designs/glass/digits.json"
+    // (read before the first frame: a few hundred bytes, and the lock waited on it)
+    blockLoading: true
     printErrors: false
     onLoaded: { try { lock.atlas = JSON.parse(text()) } catch (e) { lock.atlas = null } }
   }
@@ -127,7 +130,10 @@ DesignBase {
     // the lock shows it at full resolution at once instead of decoding it again)
     source: lock.loadBackground && lock.backgroundPath ? "file://" + String(lock.backgroundPath).split("/").map(encodeURIComponent).join("/") : ""
     fillMode: Image.PreserveAspectCrop
-    asynchronous: true
+    // (loaded before the first frame: the desktop has it decoded already, so it comes
+    // straight from the cache. Loaded in the background, the lock showed its dark
+    // background for five frames first: a black flash as it came up)
+    asynchronous: false
     // (kept decoded between locks: the same picture every time, until it changes)
     cache: true
     smooth: true

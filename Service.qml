@@ -55,7 +55,7 @@ Item {
     // (the window rules change: Hyprland reloads, and the glass is applied again
     // from scratch when it has)
     // (Round corners too: the reload puts the theme's own corners back)
-    if (before.clearTerminals !== s.clearTerminals || before.light !== s.light || before.round !== s.round || before.lowPower !== s.lowPower) reloadProc.running = true
+    if (before.clearTerminals !== s.clearTerminals || before.light !== s.light || before.round !== s.round || before.lowPower !== s.lowPower) run("reload")
     else run("settings")
   }
 
@@ -98,9 +98,4 @@ Item {
   Component.onDestruction: Quickshell.execDetached(["setsid", "bash", "-c",
     "t=\"${XDG_RUNTIME_DIR:-$HOME/.cache}/omarchy-glass-gone\"; [ -f \"$t/glass\" ] && " +
     "GLASS_DIR=\"$(cat \"$t/dir\")\" GLASS_STATE=\"$t/state\" exec bash \"$t/glass\" gone"])
-
-  Process {
-    id: reloadProc
-    command: ["hyprctl", "reload"]
-  }
 }

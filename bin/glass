@@ -5,6 +5,8 @@
 #
 #   glass start      build the engine if needed, load it, apply everything
 #   glass apply      the engine's configuration again (after a Hyprland reload)
+#   glass reload     reload Hyprland and apply the glass in the same request (a menu switch
+#                    that drops window rules: Round corners, Window light, Clear terminals)
 #   glass settings   the menu's settings only, live
 #   glass terminals  Clear terminals on or off, as the menu says
 #   glass lock       the glass lock screen on or off, as the menu says
@@ -95,27 +97,51 @@ tone() {
 }
 
 # the engine's configuration (glass.lua) with the settings and the theme's colours
-apply() {
-  local bg accent tooltip
+# The engine's whole configuration as one Lua file ($STATE/apply.lua). MODE "reload":
+# about to be sent in the same batch as a Hyprland reload, which puts the theme's
+# corners back: the theme's radius as last seen (Hyprland's own is Glass's while
+# Round corners is on)
+write_apply() {
+  local bg accent tooltip rounding light_ui
   bg=$(color "$THEME/colors.toml" "" background "#16171c")
   accent=$(color "$THEME/colors.toml" "" accent "#409cff")
   tooltip=$(color "$THEME/shell.toml" tooltip background "#${bg:2}")
-  # the theme's corner radius (a reload has just put it back; Round corners sets its own)
-  local rounding
-  rounding=$(hyprctl getoption -j decoration:rounding 2>/dev/null | jq -r '.int // 0' 2>/dev/null)
+  if [[ ${1:-} == reload ]]; then
+    rounding=$(cat "$STATE/theme-rounding" 2>/dev/null)
+  else
+    # the theme's corner radius (a reload has just put it back; Round corners sets its own)
+    rounding=$(hyprctl getoption -j decoration:rounding 2>/dev/null | jq -r '.int // 0' 2>/dev/null)
+    [[ $(setting round false) == true ]] || echo "$rounding" > "$STATE/theme-rounding"
+  fi
   [[ $rounding =~ ^[0-9]+$ ]] || rounding=0
-  local light_ui
   light_ui=$(light_theme)
   # (for the menu: it shows the tint that fits this theme)
   printf '%s\n' "$( [[ $light_ui == true ]] && echo light || echo dark )" > "$STATE/theme-mode"
-  local lua="GLASS = { card = $bg, accent = $accent, tooltip = $tooltip,
-    windows = $(applied windows 0.5), menus = $(applied menus 0.5), depth = $(applied depth 0),
-    tone = '$(tone)', light = $(applied light true), low_power = $(setting low_power false), light_style = $(setting light_style 1),
-    round = $(setting round false), rounding = $rounding, light_ui = $light_ui,
-    clear_terminals = $(setting clear_terminals false) }; dofile('$DIR/glass.lua')"
-  hyprctl eval "$lua" >/dev/null 2>&1
+  cat > "$STATE/apply.lua.new" <<EOF_LUA
+GLASS = { card = $bg, accent = $accent, tooltip = $tooltip,
+  windows = $(applied windows 0.5), menus = $(applied menus 0.5), depth = $(applied depth 0),
+  tone = '$(tone)', light = $(applied light true), low_power = $(setting low_power false), light_style = $(setting light_style 1),
+  round = $(setting round false), rounding = $rounding, light_ui = $light_ui,
+  clear_terminals = $(setting clear_terminals false) }
+dofile('$DIR/glass.lua')
+EOF_LUA
+  mv -f "$STATE/apply.lua.new" "$STATE/apply.lua"
+}
+
+apply() {
+  write_apply
+  hyprctl eval "dofile('$STATE/apply.lua')" >/dev/null 2>&1
   [[ $(setting clear_terminals false) == true ]] && foot_after_theme
   return 0
+}
+
+# A Hyprland reload (to drop window rules Glass no longer wants) and the glass applied
+# again, in one request: Hyprland draws no frame between them. (A bare reload left the
+# engine without its card rules for the few frames until "configreloaded" reached the
+# service: an open menu, the Glass menu itself, turned the whole screen grey.)
+reload() {
+  write_apply reload
+  hyprctl --batch "reload ; eval dofile('$STATE/apply.lua')" >/dev/null 2>&1
 }
 
 # the menu's live settings only (frost, depth, the tint, the border light)
@@ -443,6 +469,7 @@ trap mirror EXIT
 case ${1:-} in
   start) start ;;
   apply) [[ -n $(loaded_version) && $(setting on false) == true ]] && apply ;;
+  reload) if [[ -n $(loaded_version) && $(setting on false) == true ]]; then reload; else hyprctl reload >/dev/null 2>&1; fi ;;
   settings) [[ -n $(loaded_version) ]] && settings_only; lock_settings ;;
   terminals) [[ $(setting clear_terminals false) == true ]] && terminals_on || terminals_off ;;
   lock) [[ $(setting lock false) == true ]] && lock_on || lock_off ;;

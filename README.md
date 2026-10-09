@@ -2,6 +2,8 @@
 
 Real glass for your [Omarchy](https://omarchy.org) desktop. The bar, menus, notifications and windows become clear panes that bend what is behind them at their edges, split light into colour along the rim and catch a light from above. Menus flow out of the bar like liquid, and back into it. It works with any theme.
 
+Glass is built on [hyprglass](https://github.com/hyprnux/hyprglass) by Jeremy Trufier, the Hyprland plugin that renders the glass. Glass adds the Omarchy side on top: glass shaped to each menu, the liquid motion, auto frost, the tints, the safety checks and a one-switch setup. Thank you, Jeremy, for making it open source.
+
 ![Glass: two terminals and the calendar over the aurora](docs/media/hero.webp)
 
 **Demo videos:** [menus flowing out of the bar](https://github.com/Eddie175/omarchy-glass/releases/download/v1.0.0/hero.mp4) ·

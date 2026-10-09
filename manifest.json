@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Eddie175",
   "license": "MIT",
-  "description": "Real glass for your Omarchy desktop: the bar, menus, notifications and windows bend what is behind them at the edges and catch the light. Works with any theme.",
+  "description": "Real glass for Omarchy. The bar, menus, notifications and windows bend the light at their edges like a lens, and menus pour out of the bar like liquid. Auto frost, Dark and Light glass, Thin or Thick, round corners, six window light styles, clear terminals and a glass lock screen. Works with every theme, light on resources, and turning it off puts everything back.",
   "kinds": [
     "service",
     "bar-widget"

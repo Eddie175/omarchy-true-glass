@@ -11,8 +11,8 @@ import "Model.js" as Model
 // Service.qml applies it (bin/glass) and reports back in status there.
 Panel {
   id: root
-  moduleName: "io.github.eddie175.glass"
-  ipcTarget: "io.github.eddie175.glass"
+  moduleName: "io.github.eddie175.true-glass"
+  ipcTarget: "io.github.eddie175.true-glass"
 
   readonly property string dir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy-glass"
@@ -98,7 +98,7 @@ Panel {
     }
     anchors.fill: parent
     bar: root.bar
-    tooltipText: "Glass"
+    tooltipText: "True Glass"
     text: String.fromCodePoint(0xF00B5)
     onPressed: function(b) { root.toggle() }
   }
@@ -229,7 +229,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Glass"
+              text: "True Glass"
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -435,7 +435,7 @@ Panel {
             visible: root.confirmRemove
             textFormat: Text.PlainText
             wrapMode: Text.WordWrap
-            text: "Turns Glass off, puts back everything it changed and deletes the plugin."
+            text: "Turns True Glass off, puts back everything it changed and deletes the plugin."
             color: Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -446,7 +446,7 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             // (red, outlined: it deletes the plugin, not just the glass)
-            text: root.confirmRemove ? "Delete" : "Delete Glass plugin…"
+            text: root.confirmRemove ? "Delete" : "Delete True Glass plugin…"
             fontSize: Style.font.caption
             foreground: Color.urgent
             fontFamily: root.bar.fontFamily
@@ -456,7 +456,7 @@ Panel {
             onClicked: {
               if (!root.confirmRemove) { root.confirmRemove = true; return }
               root.close()
-              Quickshell.execDetached(["bash", "-c", "bash \"$1/bin/glass\" stop; omarchy plugin remove io.github.eddie175.glass --yes", "glass", root.dir])
+              Quickshell.execDetached(["bash", "-c", "bash \"$1/bin/glass\" stop; omarchy plugin remove io.github.eddie175.true-glass --yes", "glass", root.dir])
             }
           }
           // (its outline in the theme's red: the button's own border takes the theme's

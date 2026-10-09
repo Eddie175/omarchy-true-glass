@@ -22,7 +22,7 @@ DIR=${GLASS_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
 # when a file inside one changes, so a setting written there reloaded them all)
 STATE=${GLASS_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-glass}
 ENGINE="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-glass"
-ID="io.github.eddie175.glass"
+ID="io.github.eddie175.true-glass"
 SETTINGS="$STATE/settings.json"
 THEME="$HOME/.local/state/omarchy/current/theme"
 mkdir -p "$STATE"

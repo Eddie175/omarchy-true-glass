@@ -114,14 +114,14 @@ function copy(s) {
 function statusText(status) {
   var s = String(status || "off").trim()
   if (s === "building") return "Building the glass engine for your Hyprland, once. About a minute, a few on an older computer; it runs at low priority, so you can keep working."
-  if (s.indexOf("unsupported") === 0) return "Glass needs Hyprland 0.56. This system has " + s.split(" ")[1] + ", so the glass stays off until Glass is updated for it."
-  if (s.indexOf("tools") === 0) return "Building the engine needs: " + s.slice(6) + ". Install base-devel (sudo pacman -S --needed base-devel), then turn Glass on again."
+  if (s.indexOf("unsupported") === 0) return "True Glass needs Hyprland 0.56. This system has " + s.split(" ")[1] + ", so the glass stays off until True Glass is updated for it."
+  if (s.indexOf("tools") === 0) return "Building the engine needs: " + s.slice(6) + ". Install base-devel (sudo pacman -S --needed base-devel), then turn True Glass on again."
   if (s.indexOf("failed") === 0) return "The glass engine didn't build or load. Details: " + (s.slice(7) || "~/.local/share/omarchy-glass/build.log")
-  if (s === "relogin") return "Hyprland was updated. Log out and back in, and Glass builds its engine for the new version."
-  if (s.indexOf("crashed") === 0) return "Hyprland crashed while Glass was on, so Glass stayed off this time. Turn it on to try again, or turn on Low power first. Crash report: " + s.slice(8)
-  if (s === "gpu old") return "This computer's graphics are older than Glass supports (Intel from before 2015, or an open-source NVIDIA or older AMD driver), so it stays off: on graphics like these the glass can hang the GPU, and Hyprland closes when it does. You can try anyway, in Low power."
-  if (s === "gpu software") return "This computer draws the desktop without a graphics driver (software rendering), which is too slow for Glass, so it stays off."
-  if (s.indexOf("gpu shaders") === 0) return "Glass's shaders don't build on this graphics chip (" + s.slice(12) + "), so it turned itself off. Nothing else was changed."
-  if (s === "restart") return "An older Glass engine is still loaded. Log out and back in, then turn Glass on."
+  if (s === "relogin") return "Hyprland was updated. Log out and back in, and True Glass builds its engine for the new version."
+  if (s.indexOf("crashed") === 0) return "Hyprland crashed while True Glass was on, so True Glass stayed off this time. Turn it on to try again, or turn on Low power first. Crash report: " + s.slice(8)
+  if (s === "gpu old") return "This computer's graphics are older than True Glass supports (Intel from before 2015, or an open-source NVIDIA or older AMD driver), so it stays off: on graphics like these the glass can hang the GPU, and Hyprland closes when it does. You can try anyway, in Low power."
+  if (s === "gpu software") return "This computer draws the desktop without a graphics driver (software rendering), which is too slow for True Glass, so it stays off."
+  if (s.indexOf("gpu shaders") === 0) return "True Glass's shaders don't build on this graphics chip (" + s.slice(12) + "), so it turned itself off. Nothing else was changed."
+  if (s === "restart") return "An older True Glass engine is still loaded. Log out and back in, then turn True Glass on."
   return ""
 }

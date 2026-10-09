@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.eddie175.glass",
-  "name": "Glass",
+  "id": "io.github.eddie175.true-glass",
+  "name": "True Glass",
   "version": "1.0.0",
   "author": "Eddie175",
   "license": "MIT",
@@ -16,8 +16,8 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Glass",
-    "description": "Turn Glass on and set how the glass looks",
+    "displayName": "True Glass",
+    "description": "Turn True Glass on and set how the glass looks",
     "category": "Appearance",
     "allowMultiple": false,
     "defaultSection": "right"

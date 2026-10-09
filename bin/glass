@@ -36,7 +36,7 @@ status() {
 
 # A copy of this script and its state, ready for when the plugin goes away: the
 # service runs it then, and the plugin's folder may already be deleted.
-MIRROR="${XDG_RUNTIME_DIR:-/tmp}/omarchy-glass-gone"
+MIRROR="${XDG_RUNTIME_DIR:-$HOME/.cache}/omarchy-glass-gone"  # (owner-only: never the shared /tmp)
 mirror() {
   [[ -n ${GLASS_STATE:-} ]] && return 0      # (this is the copy)
   mkdir -p "$MIRROR"

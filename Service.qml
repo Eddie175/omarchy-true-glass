@@ -96,7 +96,7 @@ Item {
   // (from the copy bin/glass keeps in the runtime folder: the plugin's folder may
   // already be deleted by now)
   Component.onDestruction: Quickshell.execDetached(["setsid", "bash", "-c",
-    "t=\"${XDG_RUNTIME_DIR:-/tmp}/omarchy-glass-gone\"; [ -f \"$t/glass\" ] && " +
+    "t=\"${XDG_RUNTIME_DIR:-$HOME/.cache}/omarchy-glass-gone\"; [ -f \"$t/glass\" ] && " +
     "GLASS_DIR=\"$(cat \"$t/dir\")\" GLASS_STATE=\"$t/state\" exec bash \"$t/glass\" gone"])
 
   Process {

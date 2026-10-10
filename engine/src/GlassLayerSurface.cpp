@@ -1384,9 +1384,12 @@ void CGlassLayerSurface::markBackgroundDirty() {
 
     const auto& config = g_pGlobalState->config;
     int64_t fps = config.layersLiveResampleFps ? **config.layersLiveResampleFps : 0;
-    // frosted, what is behind shows as a soft blur: 10 updates a second follow it
-    // (a card over a scrolling terminal resampled with every line)
-    if (m_frost.amount() > 0.6f)
+    // frosted, what is behind shows as a soft blur: in Low power, 10 updates a second
+    // follow it (a card over a scrolling terminal resampled with every line). Not
+    // otherwise: a video behind a frosted menu stepped at 10 fps, landing unevenly
+    // on a 165 Hz screen, and read as choppy.
+    const bool lowPower = config.lowPower && **config.lowPower > 0.5f;
+    if (lowPower && m_frost.amount() > 0.6f)
         fps = fps > 0 ? std::min<int64_t>(fps, 10) : 10;
     const auto now = std::chrono::steady_clock::now();
     if (fps > 0 && now - m_lastDirtyMark < std::chrono::nanoseconds(1'000'000'000 / fps)) {

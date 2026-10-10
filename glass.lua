@@ -52,7 +52,9 @@ hg.config({
   enabled = true,
   default_theme = "dark",
   default_preset = "glass-window",
-  layers = { enabled = true },
+  -- (menus follow what changes behind them at its own rate, a video at its frame
+  -- rate; Low power keeps them to 30 updates a second)
+  layers = { enabled = true, live_resample_fps = G.low_power and 30 or 0 },
 })
 
 -- The bar keeps Omarchy's own geometry (a full-width strip): its glass runs past

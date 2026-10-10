@@ -988,7 +988,11 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         } else {
             g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, true);
             for (const auto& r : intoCache->rects) {
-                glScissor(static_cast<int>(std::floor(r.x)), static_cast<int>(std::floor(r.y)), static_cast<int>(std::ceil(r.w)) + 1, static_cast<int>(std::ceil(r.h)) + 1);
+                // (through Hyprland, never glScissor: it skips a box it believes is already
+                // set, so a raw one stayed in force and clipped the next window to this rim
+                // strip; a fullscreen video showed the wallpaper)
+                g_pHyprOpenGL->scissor(static_cast<int>(std::floor(r.x)), static_cast<int>(std::floor(r.y)), static_cast<int>(std::ceil(r.w)) + 1,
+                                       static_cast<int>(std::ceil(r.h)) + 1, false);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 shaded += r.w * r.h;
             }
@@ -1003,43 +1007,26 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         return;
     }
 
-    // Only finalDamage is copied to the screen, and elementDamage (which finalDamage is a
-    // subset of) already covers every pixel we're visible at, so scissoring to the damage
-    // clips no pixel that would otherwise reach the screen.
-    // Each damaged rectangle on its own: one box round all of them shaded everything
-    // between a spinner at the top and a new line at the bottom (a few rects; past
-    // that, their bounding box is cheaper than the draws).
+    // Only the damage, rect by rect, never more: what lies above the glass is redrawn
+    // only where this frame is damaged, so glass shaded anywhere else stays on screen
+    // over it. (The bounding box of many rects, or the whole box when the damage
+    // missed it, covered a fullscreen YouTube window with the wallpaper.)
     CRegion inBox = g_pHyprRenderer->m_renderData.damage.copy().intersect(rawBox);
     // A layer's glass only where something of it is drawn (a contour card: its
     // measured content, with room for its shadow): the shader discards the rest,
     // but each pixel still started it, and a full-screen layer over a scrolling
     // terminal started it over the whole screen every frame.
-    bool clipped = false;
     if (mask && mask->contentBox.w > 0.0 && mask->contentBox.h > 0.0 && !inBox.empty()) {
         const CBox inQuad = mask->contentBox.copy().translate(transformedBox.pos()).expand(1.0);
         inBox.intersect(WindowGeometry::unapplyMonitorTransform(inQuad, g_pHyprRenderer->m_renderData.pMonitor.lock()));
-        clipped = true;
     }
-    const auto rects = inBox.getRects();
+    // (an empty region: this frame's damage misses the glass, nothing to do)
     double shaded = 0.0;
-    if (rects.empty() && clipped) {
-        // (this frame's damage misses everything drawn: nothing to do)
-    } else if (rects.empty()) {
-        g_pHyprOpenGL->scissor(rawBox);
+    for (const auto& r : inBox.getRects()) {
+        const CBox b{static_cast<double>(r.x1), static_cast<double>(r.y1), static_cast<double>(r.x2 - r.x1), static_cast<double>(r.y2 - r.y1)};
+        g_pHyprOpenGL->scissor(b);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        shaded = rawBox.w * rawBox.h;
-    } else if (rects.size() <= 8) {
-        for (const auto& r : rects) {
-            const CBox b{static_cast<double>(r.x1), static_cast<double>(r.y1), static_cast<double>(r.x2 - r.x1), static_cast<double>(r.y2 - r.y1)};
-            g_pHyprOpenGL->scissor(b);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            shaded += b.w * b.h;
-        }
-    } else {
-        const CBox ext = inBox.getExtents();
-        g_pHyprOpenGL->scissor(ext);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        shaded = ext.w * ext.h;
+        shaded += b.w * b.h;
     }
     g_pHyprOpenGL->scissor(nullptr);
     if (const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock())
@@ -1072,19 +1059,11 @@ void drawOutputCache(const SP<Render::IFramebuffer>& cache, SP<Render::IFramebuf
     shader->setUniformInt(SHADER_TEX, 0);
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
 
-    CRegion    inBox = g_pHyprRenderer->m_renderData.damage.copy().intersect(rawBox);
-    const auto rects = inBox.getRects();
-    if (rects.empty()) {
-        g_pHyprOpenGL->scissor(rawBox);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    } else if (rects.size() <= 8) {
-        for (const auto& r : rects) {
-            const CBox b{static_cast<double>(r.x1), static_cast<double>(r.y1), static_cast<double>(r.x2 - r.x1), static_cast<double>(r.y2 - r.y1)};
-            g_pHyprOpenGL->scissor(b);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        }
-    } else {
-        g_pHyprOpenGL->scissor(inBox.getExtents());
+    // (only the damage, rect by rect: as in applyGlassEffect)
+    CRegion inBox = g_pHyprRenderer->m_renderData.damage.copy().intersect(rawBox);
+    for (const auto& r : inBox.getRects()) {
+        const CBox b{static_cast<double>(r.x1), static_cast<double>(r.y1), static_cast<double>(r.x2 - r.x1), static_cast<double>(r.y2 - r.y1)};
+        g_pHyprOpenGL->scissor(b);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
     g_pHyprOpenGL->scissor(nullptr);

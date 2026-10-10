@@ -297,7 +297,11 @@ static bool drawCells(SP<Render::IFramebuffer>& cells, GLuint maskTexture, const
 
     g_pHyprRenderer->blend(false);
     g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, sub != nullptr);
-    if (sub)
+    // (through Hyprland when it is rendering, never raw then: see GlassRenderer's kept
+    // glass; its scissor() asserts a monitor, so outside a render the raw call stays)
+    if (sub && g_pHyprRenderer->m_renderData.pMonitor)
+        g_pHyprOpenGL->scissor((*sub)[0], (*sub)[1], (*sub)[2], (*sub)[3], false);
+    else if (sub)
         glScissor((*sub)[0], (*sub)[1], (*sub)[2], (*sub)[3]);
     g_pHyprOpenGL->setViewport(0, 0, cw, ch);
     glActiveTexture(GL_TEXTURE0);

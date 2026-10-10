@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.eddie175.true-glass",
   "name": "True Glass",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Eddie175",
   "license": "MIT",
   "description": "Real glass for Omarchy. The bar, menus, notifications and windows bend the light at their edges like a lens, and menus pour out of the bar like liquid. Auto frost, Dark and Light glass, Thin or Thick, round corners, six window light styles, clear terminals and a glass lock screen. Works with every theme, light on resources, and turning it off puts everything back.",
